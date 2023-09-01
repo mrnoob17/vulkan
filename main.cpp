@@ -45,54 +45,9 @@ Array<Array<float>> matrix_product(const Array<Array<float>>& a, const Array<Arr
 int main()
 {
     Context context;
-    context.init("vulkan test", 720, 720);
+    context.init("vulkan test", 1280, 720);
     context.build_synchronization();
     context.build_pipeline_stages();
-    auto ex_triangle {context.add_new_pipeline([&]() -> Pipeline
-    {
-        Pipeline result;
-        VkResult err;
-        auto& c {context};
-        auto info {c.new_pipeline_create_info()};
-
-        auto vertex {c.load_shader("shader.vert.spv")};
-        auto frag {c.load_shader("shader.frag.spv")};
-
-        const auto shader_count {2};
-
-        info.stageCount = shader_count;
-
-        VkPipelineShaderStageCreateInfo shader_stages[shader_count] {};
-
-        shader_stages[0] = c.new_shader_stage(VK_SHADER_STAGE_VERTEX_BIT, vertex);
-        shader_stages[1] = c.new_shader_stage(VK_SHADER_STAGE_FRAGMENT_BIT, frag);
-        info.pStages = shader_stages;
-
-        VkPushConstantRange constant
-        {
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-            .offset = 0,
-            .size = sizeof(V2),
-        };
-
-        VkPipelineLayoutCreateInfo layout_info
-        {
-            .sType = VKT(PIPELINE_LAYOUT_CREATE_INFO),
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &constant,
-        };
-
-        err = vkCreatePipelineLayout(c.gpu->device, &layout_info, nullptr, &result.layout);
-        check_vk(err);
-
-        info.layout = result.layout;
-        err = vkCreateGraphicsPipelines(c.gpu->device, VK_NULL_HANDLE, 1, &info, nullptr, &result.pipeline);
-        check_vk(err);
-        vkDestroyShaderModule(c.gpu->device, vertex, nullptr);
-        vkDestroyShaderModule(c.gpu->device, frag, nullptr);
-        return result;
-
-    })};
 
     auto immediate_pipeline {context.add_new_pipeline([&]() -> Pipeline
     {
@@ -145,14 +100,80 @@ int main()
         return result;
     })};
 
-    auto ip {context.get_pipeline(immediate_pipeline)};
-    auto ep {context.get_pipeline(ex_triangle)};
+    auto additive_pipeline {context.add_new_pipeline([&]() -> Pipeline
+    {
+        struct Data
+        {
+            V4 a[3];
+            RGBA b[3];
+        };
+
+        Pipeline result;
+        VkResult err;
+        auto& c {context};
+        auto info {c.new_pipeline_create_info()};
+
+        VkPipelineColorBlendAttachmentState color_blend_attachment {};
+        VkPipelineColorBlendStateCreateInfo color_blend_info       {};
+
+        color_blend_attachment.blendEnable = VK_TRUE;
+        color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+        color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+        color_blend_info.sType = VKT(PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
+        color_blend_info.logicOpEnable = VK_FALSE;
+        color_blend_info.attachmentCount = 1;
+        color_blend_info.pAttachments = &color_blend_attachment;
+        info.pColorBlendState = &color_blend_info;
+
+        auto vertex {c.load_shader("ishader.vert.spv")};
+        auto frag {c.load_shader("shader.frag.spv")};
+
+        const auto shader_count {2};
+
+        info.stageCount = shader_count;
+
+        VkPipelineShaderStageCreateInfo shader_stages[shader_count] {};
+
+        shader_stages[0] = c.new_shader_stage(VK_SHADER_STAGE_VERTEX_BIT, vertex);
+        shader_stages[1] = c.new_shader_stage(VK_SHADER_STAGE_FRAGMENT_BIT, frag);
+        info.pStages = shader_stages;
+
+        VkPushConstantRange constant
+        {
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+            .offset = 0,
+            .size = sizeof(Data),
+        };
+
+        VkPipelineLayoutCreateInfo layout_info
+        {
+            .sType = VKT(PIPELINE_LAYOUT_CREATE_INFO),
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &constant,
+        };
+
+        err = vkCreatePipelineLayout(c.gpu->device, &layout_info, nullptr, &result.layout);
+        check_vk(err);
+
+        info.layout = result.layout;
+        err = vkCreateGraphicsPipelines(c.gpu->device, VK_NULL_HANDLE, 1, &info, nullptr, &result.pipeline);
+        check_vk(err);
+        vkDestroyShaderModule(c.gpu->device, vertex, nullptr);
+        vkDestroyShaderModule(c.gpu->device, frag, nullptr);
+        return result;
+    })};
 
     auto running {true};
 
     VkClearValue clear {{{1.f, 0.8f, 0.8f, 1.f}}};
 
-    V2 offset;
+    V2 mouse;
 
     auto clamp {[](auto a, auto b, auto c)
     {
@@ -165,11 +186,9 @@ int main()
         return a;
     }};
 
-    auto render_triangle {[&](V2 a, V2 b, V2 c, const RGBA& ca, const RGBA& cb, const RGBA& cc, const float rotation = 0.f, V2 mid = {FLT_MAX, FLT_MAX})
+    auto render_triangle {[&](const int p, V2 a, V2 b, V2 c, const RGBA& ca, const RGBA& cb, const RGBA& cc, const float rotation = 0.f, V2 mid = {FLT_MAX, FLT_MAX})
     {
-        a = context.norm(a.x, a.y);
-        b = context.norm(b.x, b.y);
-        c = context.norm(c.x, c.y);
+        const auto& pl {context.get_pipeline(p)};
 
         struct Data
         {
@@ -191,13 +210,31 @@ int main()
             mid.y = a.y + b.y + c.y;
             mid.x /= 3.f;
             mid.y /= 3.f;
-            a.x -= mid.x;
-            b.x -= mid.x;
-            c.x -= mid.x;
-            a.y -= mid.y;
-            b.y -= mid.y;
-            c.y -= mid.y;
         }
+
+        a.x -= mid.x;
+        b.x -= mid.x;
+        c.x -= mid.x;
+        a.y -= mid.y;
+        b.y -= mid.y;
+        c.y -= mid.y;
+
+        auto coords {matrix_product({{a.x, a.y}}, r_matrix)};
+
+        a.x = coords[0][0] + mid.x;
+        a.y = coords[0][1] + mid.y;
+
+        coords = matrix_product({{b.x, b.y}}, r_matrix);
+        b.x = coords[0][0] + mid.x;
+        b.y = coords[0][1] + mid.y;
+
+        coords = matrix_product({{c.x, c.y}}, r_matrix);
+        c.x = coords[0][0] + mid.x;
+        c.y = coords[0][1] + mid.y;
+
+        a = context.norm(a.x, a.y);
+        b = context.norm(b.x, b.y);
+        c = context.norm(c.x, c.y);
 
         float data[24]{
                        a.x,  a.y,  0.f,  1.f,
@@ -208,39 +245,26 @@ int main()
                        cc.r, cc.g, cc.b, cc.a 
         };
 
-        auto coords {matrix_product({{data[0], data[1]}}, r_matrix)};
 
-        data[0] = coords[0][0] + mid.x;
-        data[1] = coords[0][1] + mid.y;
+        vkCmdBindPipeline(context.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pl.pipeline);
 
-        coords = matrix_product({{data[4], data[5]}}, r_matrix);
-        data[4] = coords[0][0] + mid.x;
-        data[5] = coords[0][1] + mid.y;
-
-        coords = matrix_product({{data[8], data[9]}}, r_matrix);
-        data[8] = coords[0][0] + mid.x;
-        data[9] = coords[0][1] + mid.y;
-
-        vkCmdBindPipeline(context.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ip.pipeline);
-
-        vkCmdPushConstants(context.command_buffer, ip.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, size, (void*)(data));
+        vkCmdPushConstants(context.command_buffer, pl.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, size, (void*)(data));
 
         vkCmdDraw(context.command_buffer, 3, 1, 0, 0);
     }};
 
-    auto i_render_triangle {[&](V2 a, V2 b, V2 c, RGBA color, const float rotation = 0.f, V2 mid = {FLT_MAX, FLT_MAX})
+    auto i_render_triangle {[&](const int p, V2 a, V2 b, V2 c, RGBA color, const float rotation = 0.f, V2 mid = {FLT_MAX, FLT_MAX})
     {
-        render_triangle(a, b, c, color, color, color, rotation, mid);
+        render_triangle(p, a, b, c, color, color, color, rotation, mid);
     }};
 
-    auto render_rectangle{[&](V2 a, V2 b, const RGBA& c, const float rotation = 0)
+    auto render_rectangle{[&](const int p, V2 a, V2 b, const RGBA& c, const float rotation = 0)
     {
         V2 mid;
         mid.x = a.x + b.x * 0.5f;
         mid.y = a.y + b.y * 0.5f;
-        mid = context.norm(mid.x, mid.y);
-        i_render_triangle(a, {a.x + b.x, a.y}, {a.x, a.y + b.y}, c, rotation, mid);
-        i_render_triangle({a.x + b.x, a.y}, {a.x, a.y + b.y}, {a.x + b.x, a.y + b.y}, c, rotation, mid);
+        i_render_triangle(p, a, {a.x + b.x, a.y}, {a.x, a.y + b.y}, c, rotation, mid);
+        i_render_triangle(p, {a.x + b.x, a.y}, {a.x, a.y + b.y}, {a.x + b.x, a.y + b.y}, c, rotation, mid);
     }};
 
 
@@ -270,7 +294,8 @@ int main()
             int y;
             SDL_GetMouseState(&x, &y);
 
-            offset = context.norm(x, y);
+            mouse.x = x;
+            mouse.y = y;
 
             auto& c {clear.color.float32};
             c[0] = 0;
@@ -311,23 +336,16 @@ int main()
         vkBeginCommandBuffer(context.command_buffer, &buffer_begin_info);
         vkCmdBeginRenderPass(context.command_buffer, &render_pass_begin, VK_SUBPASS_CONTENTS_INLINE);
 
-        vkCmdBindPipeline(context.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ep.pipeline);
+        i_render_triangle(immediate_pipeline, {500, 0}, {10, 100}, { 510, 80}, {1.f, 1.f, 1.f, 1.f}, angle);
 
-        vkCmdPushConstants(context.command_buffer, ep.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(V2), (void*)(&offset));
+        render_triangle(immediate_pipeline, {500,  300}, {400, 450}, {575, 400}, {1.f, 0.f, 1.f, 1.f}, {0, 1.f, 1.f, 1.f}, {1.f, 1.f, 0, 1.f}, angle);
 
-        vkCmdDraw(context.command_buffer, 3, 1, 0, 0);
-        vkCmdDraw(context.command_buffer, 3, 1, 3, 0);
+        i_render_triangle(immediate_pipeline, {510,  300}, {600, 600}, {550, 400}, {0, 0.f, 1.f, 1.f}, angle);
 
-        i_render_triangle({500, 0}, {10, 100}, { 510, 80}, {1.f, 1.f, 1.f, 1.f}, angle);
+        i_render_triangle(additive_pipeline, {550,  300}, {650, 600}, {580, 350}, {1, 0.f, 0.f, 1.f}, angle);
 
-        render_triangle({500,  300}, {400, 450}, {575, 400}, {1.f, 0.f, 1.f, 1.f}, {0, 1.f, 1.f, 1.f}, {1.f, 1.f, 0, 1.f}, angle);
-
-        i_render_triangle({510,  300}, {600, 600}, {550, 400}, {0, 1.f, 1.f, 1.f}, angle);
-
-        i_render_triangle({550,  300}, {650, 600}, {580, 350}, {0, 1.f, 1.f, 1.f}, angle);
-
-        V2 size {100, 100};
-        render_rectangle({(float)(context.width * 0.5 - size.x * 0.5f), (float)(context.height * 0.5f - size.y * 0.5f)}, size, {0, 1, 0, 1}, angle);
+        V2 size {720, 720};
+        render_rectangle(additive_pipeline, {mouse.x - size.x * 0.5f, mouse.y - size.y * 0.5f}, size, {0, 1, 0, 1.f});
 
         vkCmdEndRenderPass(context.command_buffer);
 

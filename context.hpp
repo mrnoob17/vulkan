@@ -472,10 +472,15 @@ struct Context
 
         color_blend_attachment.blendEnable = VK_TRUE;
         color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+        color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
         color_blend_info.sType = VKT(PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
-        color_blend_info.logicOpEnable = VK_TRUE;
-        color_blend_info.logicOp = VK_LOGIC_OP_COPY; 
+        color_blend_info.logicOpEnable = VK_FALSE;
         color_blend_info.attachmentCount = 1;
         color_blend_info.pAttachments = &color_blend_attachment;
     }
@@ -535,6 +540,11 @@ struct Context
             .pName = "main"
         };
         return info;
+    }
+
+    float aspect_ratio()
+    {
+        return (float)width / (float)height;
     }
 
     V2 norm(const float x, const float y)
