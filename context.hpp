@@ -59,9 +59,6 @@ struct Context
 
     VkRenderPass render_pass;
 
-    Array<const char*> extensions;
-    Array<VkLayerProperties> layers;
-    Array<const char*> layer_names;
     Array<GPU> gpus;
 
     Array<VkFramebuffer> framebuffers;
@@ -106,60 +103,66 @@ struct Context
         VkResult err;
 
         {
-            SDL_Vulkan_GetInstanceExtensions(window, &ctr, nullptr);
-            extensions.resize(ctr);
-            auto res {SDL_Vulkan_GetInstanceExtensions(window, &ctr, extensions.data())};
-            if(res != SDL_TRUE){
-                assert(false);
-            }
-        }
-
-        vkEnumerateInstanceLayerProperties(&ctr, nullptr);
-        layers.resize(ctr);
-        err = vkEnumerateInstanceLayerProperties(&ctr, layers.data());
-        check_vk(err);
-
-        const char* unwanted_layers[] {"VK_LAYER_LUNARG_api_dump"};
-
-        for(auto& l : layers)
-        {
-            auto found {false};
-            for(auto j : unwanted_layers)
+            Array<const char*> extensions;
             {
-                if(String{j} == l.layerName)
-                {
-                    found = true;
-                    break;
+                SDL_Vulkan_GetInstanceExtensions(window, &ctr, nullptr);
+                extensions.resize(ctr);
+                auto res {SDL_Vulkan_GetInstanceExtensions(window, &ctr, extensions.data())};
+                if(res != SDL_TRUE){
+                    assert(false);
                 }
             }
-            if(!found){
-                layer_names.push_back(l.layerName);
-            }
-        }
 
-        {
-
-            VkApplicationInfo app_info
-            {
-                .sType = VKT(APPLICATION_INFO),
-                .apiVersion = VK_API_VERSION_1_3
-            };
-
-            VkInstanceCreateInfo info
-            {
-                .sType = VKT(INSTANCE_CREATE_INFO),
-                .pApplicationInfo = &app_info,
-                .enabledLayerCount = (u32)layer_names.size(),
-                .ppEnabledLayerNames = layer_names.data(),
-                .enabledExtensionCount = (u32)extensions.size(),
-                .ppEnabledExtensionNames = extensions.data()
-            };
-
-            err = vkCreateInstance(&info, nullptr, &instance);
+            Array<VkLayerProperties> layers;
+            Array<const char*> layer_names;
+            vkEnumerateInstanceLayerProperties(&ctr, nullptr);
+            layers.resize(ctr);
+            err = vkEnumerateInstanceLayerProperties(&ctr, layers.data());
             check_vk(err);
-            auto res {SDL_Vulkan_CreateSurface(window, instance, &surface)};
-            if(res != SDL_TRUE){
-                assert(false);
+
+            const char* unwanted_layers[] {"VK_LAYER_LUNARG_api_dump", 
+                                            /*"VK_LAYER_LUNARG_monitor"*/}; // remove comment to remove fps in window title
+
+            for(auto& l : layers)
+            {
+                auto found {false};
+                for(auto j : unwanted_layers)
+                {
+                    if(String{j} == l.layerName)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if(!found){
+                    layer_names.push_back(l.layerName);
+                }
+            }
+
+            {
+
+                VkApplicationInfo app_info
+                {
+                    .sType = VKT(APPLICATION_INFO),
+                    .apiVersion = VK_API_VERSION_1_3
+                };
+
+                VkInstanceCreateInfo info
+                {
+                    .sType = VKT(INSTANCE_CREATE_INFO),
+                    .pApplicationInfo = &app_info,
+                    .enabledLayerCount = (u32)layer_names.size(),
+                    .ppEnabledLayerNames = layer_names.data(),
+                    .enabledExtensionCount = (u32)extensions.size(),
+                    .ppEnabledExtensionNames = extensions.data()
+                };
+
+                err = vkCreateInstance(&info, nullptr, &instance);
+                check_vk(err);
+                auto res {SDL_Vulkan_CreateSurface(window, instance, &surface)};
+                if(res != SDL_TRUE){
+                    assert(false);
+                }
             }
         }
 
