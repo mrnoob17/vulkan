@@ -21,20 +21,18 @@ using Duration = std::chrono::duration<float>;
  
  */
 
-Array<Array<float>> matrix_product(const Array<Array<float>>& a, const Array<Array<float>>& b)
+template<typename A, typename B>
+auto matrix_product(const A& a, const B& b)
 {
-    assert(a[0].size() == b.size());
+    static_assert(a.cols == b.rows);
 
-    Array<Array<float>> result(a.size());
-    for(auto& v : result){
-        v.resize(b[0].size());
-    }
+    Matrix<typename A::type, a.rows, b.cols> result;
 
-    for(int i = 0; i < a.size(); i++)
+    for(int i = 0; i < a.rows; i++)
     {
-        for(int j = 0; j < a[i].size(); j++)
+        for(int j = 0; j < a.cols; j++)
         {
-            for(int k = 0; k < a[i].size(); k++){
+            for(int k = 0; k < a.cols; k++){
                 result[i][j] += a[i][k] * b[k][j];
             }
         }
@@ -63,7 +61,6 @@ int main()
         auto info {c.new_pipeline_create_info()};
 
         auto vertex {c.load_shader("ishader.vert.spv")};
-        auto frag {c.load_shader("shader.frag.spv")};
 
         const auto shader_count {2};
 
@@ -72,7 +69,7 @@ int main()
         VkPipelineShaderStageCreateInfo shader_stages[shader_count] {};
 
         shader_stages[0] = c.new_shader_stage(VK_SHADER_STAGE_VERTEX_BIT, vertex);
-        shader_stages[1] = c.new_shader_stage(VK_SHADER_STAGE_FRAGMENT_BIT, frag);
+        shader_stages[1] = c.new_shader_stage(VK_SHADER_STAGE_FRAGMENT_BIT, context.generic_fragment_shader);
         info.pStages = shader_stages;
 
         VkPushConstantRange constant
@@ -96,7 +93,6 @@ int main()
         err = vkCreateGraphicsPipelines(c.gpu->device, VK_NULL_HANDLE, 1, &info, nullptr, &result.pipeline);
         check_vk(err);
         vkDestroyShaderModule(c.gpu->device, vertex, nullptr);
-        vkDestroyShaderModule(c.gpu->device, frag, nullptr);
         return result;
     })};
 
@@ -132,7 +128,6 @@ int main()
         info.pColorBlendState = &color_blend_info;
 
         auto vertex {c.load_shader("ishader.vert.spv")};
-        auto frag {c.load_shader("shader.frag.spv")};
 
         const auto shader_count {2};
 
@@ -141,7 +136,7 @@ int main()
         VkPipelineShaderStageCreateInfo shader_stages[shader_count] {};
 
         shader_stages[0] = c.new_shader_stage(VK_SHADER_STAGE_VERTEX_BIT, vertex);
-        shader_stages[1] = c.new_shader_stage(VK_SHADER_STAGE_FRAGMENT_BIT, frag);
+        shader_stages[1] = c.new_shader_stage(VK_SHADER_STAGE_FRAGMENT_BIT, context.generic_fragment_shader);
         info.pStages = shader_stages;
 
         VkPushConstantRange constant
@@ -165,13 +160,12 @@ int main()
         err = vkCreateGraphicsPipelines(c.gpu->device, VK_NULL_HANDLE, 1, &info, nullptr, &result.pipeline);
         check_vk(err);
         vkDestroyShaderModule(c.gpu->device, vertex, nullptr);
-        vkDestroyShaderModule(c.gpu->device, frag, nullptr);
         return result;
     })};
 
     auto running {true};
 
-    VkClearValue clear {{{1.f, 0.8f, 0.8f, 1.f}}};
+    RGBA clear {0, 0, 0, 1.f};
 
     V2 mouse;
 
@@ -201,8 +195,12 @@ int main()
         const auto sin {sinf(rotation)};
         const auto cos {cosf(rotation)};
 
-        const Array<Array<float>> r_matrix {{cos, -sin},
-                                            {sin, cos}};
+        Matrix<float, 2, 2> r_matrix;
+
+        r_matrix[0][0] = cos;
+        r_matrix[0][1] = sin;
+        r_matrix[1][0] = -sin;
+        r_matrix[1][1] = cos;
 
         if(mid.x == FLT_MAX)
         {
@@ -219,16 +217,23 @@ int main()
         b.y -= mid.y;
         c.y -= mid.y;
 
-        auto coords {matrix_product({{a.x, a.y}}, r_matrix)};
+        Matrix<float, 1, 2> coordinate;
+        coordinate[0][0] = a.x;
+        coordinate[0][1] = a.y;
 
+        auto coords {matrix_product(coordinate, r_matrix)};
         a.x = coords[0][0] + mid.x;
         a.y = coords[0][1] + mid.y;
 
-        coords = matrix_product({{b.x, b.y}}, r_matrix);
+        coordinate[0][0] = b.x;
+        coordinate[0][1] = b.y;
+        coords = matrix_product(coordinate, r_matrix);
         b.x = coords[0][0] + mid.x;
         b.y = coords[0][1] + mid.y;
 
-        coords = matrix_product({{c.x, c.y}}, r_matrix);
+        coordinate[0][0] = c.x;
+        coordinate[0][1] = c.y;
+        coords = matrix_product(coordinate, r_matrix);
         c.x = coords[0][0] + mid.x;
         c.y = coords[0][1] + mid.y;
 
@@ -244,7 +249,6 @@ int main()
                        cb.r, cb.g, cb.b, ca.a,
                        cc.r, cc.g, cc.b, cc.a 
         };
-
 
         vkCmdBindPipeline(context.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pl.pipeline);
 
@@ -296,11 +300,6 @@ int main()
 
             mouse.x = x;
             mouse.y = y;
-
-            auto& c {clear.color.float32};
-            c[0] = 0;
-            c[1] = 0;
-            c[2] = 0;
         }
 
         angle += (M_PI * dt) * 0.25f;
@@ -308,33 +307,7 @@ int main()
             angle = 0.0f;
         }
 
-        vkWaitForFences(context.gpu->device, 1, &context.syncs.fence, VK_TRUE, 50000000);
-        vkResetFences(context.gpu->device, 1, &context.syncs.fence);
-
-        vkResetCommandBuffer(context.command_buffer, 0);
-
-        VkResult err;
-        u32 image;
-        vkAcquireNextImageKHR(context.gpu->device, context.gpu->swapchain, 50000000, context.syncs.fetch, VK_NULL_HANDLE, &image);
-
-        VkRenderPassBeginInfo render_pass_begin
-        {
-            .sType = VKT(RENDER_PASS_BEGIN_INFO),
-            .renderPass = context.render_pass,
-            .framebuffer = context.framebuffers[image],
-            .renderArea {.offset = {0, 0}, .extent = context.extent},
-            .clearValueCount = 1,
-            .pClearValues = &clear,
-        };
-
-        VkCommandBufferBeginInfo buffer_begin_info
-        {
-            .sType = VKT(COMMAND_BUFFER_BEGIN_INFO),
-            .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT,
-        };
-
-        vkBeginCommandBuffer(context.command_buffer, &buffer_begin_info);
-        vkCmdBeginRenderPass(context.command_buffer, &render_pass_begin, VK_SUBPASS_CONTENTS_INLINE);
+        context.render_reset(clear);
 
         i_render_triangle(immediate_pipeline, {500, 0}, {10, 100}, { 510, 80}, {1.f, 1.f, 1.f, 1.f}, angle);
 
@@ -342,44 +315,12 @@ int main()
 
         i_render_triangle(immediate_pipeline, {510,  300}, {600, 600}, {550, 400}, {0, 0.f, 1.f, 1.f}, angle);
 
-        i_render_triangle(additive_pipeline, {550,  300}, {650, 600}, {580, 350}, {1, 0.f, 0.f, 1.f}, angle);
+        i_render_triangle(immediate_pipeline, {550,  300}, {650, 600}, {580, 350}, {1, 0.f, 0.f, 1.f}, angle);
 
         V2 size {720, 720};
         render_rectangle(additive_pipeline, {mouse.x - size.x * 0.5f, mouse.y - size.y * 0.5f}, size, {0, 1, 0, 1.f});
 
-        vkCmdEndRenderPass(context.command_buffer);
-
-        vkEndCommandBuffer(context.command_buffer);
-
-        VkPipelineStageFlags stages[] {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-
-        VkSubmitInfo submit
-        {
-            .sType = VKT(SUBMIT_INFO),
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &context.syncs.fetch,
-            .pWaitDstStageMask = stages,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &context.command_buffer,
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &context.syncs.draw,
-        };
-
-        err = vkQueueSubmit(context.gpu->device_queue, 1, &submit, context.syncs.fence);
-        check_vk(err);
-
-        VkPresentInfoKHR present
-        {
-            .sType = VKT(PRESENT_INFO_KHR),
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &context.syncs.draw,
-            .swapchainCount = 1,
-            .pSwapchains = &context.gpu->swapchain, 
-            .pImageIndices = &image
-        };
-
-        err = vkQueuePresentKHR(context.gpu->device_queue, &present);
-        check_vk(err);
+        context.present();
 
         end = Time::now();
         frame++;

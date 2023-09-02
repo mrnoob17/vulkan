@@ -86,9 +86,13 @@ struct Context
 
     float queue_priority {1.f};
 
+    Array<Pipeline> pipelines;
+    u32 swapchain_image;
+
+    VkShaderModule generic_fragment_shader {};
+
     void init(const char* name, const int w, const int h)
     {
-
         // TODO do proper error handling noob
 
         width = w;
@@ -193,27 +197,31 @@ struct Context
                     }
                 }
 
-                Array<VkExtensionProperties> extension_properties;
-                vkEnumerateDeviceExtensionProperties(p, nullptr, &ctr, nullptr);
-                extension_properties.resize(ctr);
-                err = vkEnumerateDeviceExtensionProperties(p, nullptr, &ctr, extension_properties.data());
-                check_vk(err);
+                const char* required_extensions[] {"VK_KHR_portability_subset", VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-                Array<const char*> device_extensions {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+                Array<const char*> device_extensions {required_extensions[0], required_extensions[1]};
 
-                const char* required_extensions[] {"VK_KHR_portability_subset"};
+                // NOTE this causes an access violation error during second call to vkEnumerateDeviceExtensionProperties
+                // just manually added required extentions for now in the device extensions cause can't check if extension is available for the device!
+                //Array<VkExtensionProperties> extension_properties;
+                //vkEnumerateDeviceExtensionProperties(p, nullptr, &ctr, nullptr);
+                //extension_properties.resize(ctr);
+                //err = vkEnumerateDeviceExtensionProperties(p, nullptr, &ctr, extension_properties.data());
+                //check_vk(err);
 
-                for(auto& i : extension_properties)
-                {
-                    for(auto j : required_extensions)
-                    {
-                        if(String{i.extensionName} == j)
-                        {
-                            device_extensions.push_back(j);
-                            break;
-                        }
-                    }
-                }
+                //Array<const char*> device_extensions {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
+                //for(auto& i : extension_properties)
+                //{
+                //    for(auto j : required_extensions)
+                //    {
+                //        if(String{i.extensionName} == j)
+                //        {
+                //            device_extensions.push_back(j);
+                //            break;
+                //        }
+                //    }
+                //}
 
                 VkPhysicalDeviceFeatures features;
 
@@ -417,6 +425,8 @@ struct Context
                 framebuffers.push_back(framebuffer);
             }
         }
+
+        generic_fragment_shader = load_shader("shader.frag.spv");
     }
 
     void build_synchronization()
@@ -542,6 +552,78 @@ struct Context
         return info;
     }
 
+    void render_reset(const RGBA& color)
+    {
+        // TODO error handling
+        VkClearValue clear {{{color.r, color.g, color.b, color.a}}};
+
+        vkWaitForFences(gpu->device, 1, &syncs.fence, VK_TRUE, 50000000);
+        vkResetFences(gpu->device, 1, &syncs.fence);
+
+        vkResetCommandBuffer(command_buffer, 0);
+
+        VkResult err;
+        vkAcquireNextImageKHR(gpu->device, gpu->swapchain, 50000000, syncs.fetch, VK_NULL_HANDLE, &swapchain_image);
+
+        VkRenderPassBeginInfo render_pass_begin
+        {
+            .sType = VKT(RENDER_PASS_BEGIN_INFO),
+            .renderPass = render_pass,
+            .framebuffer = framebuffers[swapchain_image],
+            .renderArea {.offset = {0, 0}, .extent = extent},
+            .clearValueCount = 1,
+            .pClearValues = &clear,
+        };
+
+        VkCommandBufferBeginInfo buffer_begin_info
+        {
+            .sType = VKT(COMMAND_BUFFER_BEGIN_INFO),
+            .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT,
+        };
+
+        vkBeginCommandBuffer(command_buffer, &buffer_begin_info);
+        vkCmdBeginRenderPass(command_buffer, &render_pass_begin, VK_SUBPASS_CONTENTS_INLINE);
+    }
+
+    void present()
+    {
+        VkResult err;
+        vkCmdEndRenderPass(command_buffer);
+
+        vkEndCommandBuffer(command_buffer);
+
+        VkPipelineStageFlags stages[] {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
+        VkSubmitInfo submit
+        {
+            .sType = VKT(SUBMIT_INFO),
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &syncs.fetch,
+            .pWaitDstStageMask = stages,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &command_buffer,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &syncs.draw,
+        };
+
+        err = vkQueueSubmit(gpu->device_queue, 1, &submit, syncs.fence);
+        check_vk(err);
+
+        VkPresentInfoKHR present
+        {
+            .sType = VKT(PRESENT_INFO_KHR),
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &syncs.draw,
+            .swapchainCount = 1,
+            .pSwapchains = &gpu->swapchain, 
+            .pImageIndices = &swapchain_image
+        };
+
+        err = vkQueuePresentKHR(gpu->device_queue, &present);
+        check_vk(err);
+
+    }
+
     float aspect_ratio()
     {
         return (float)width / (float)height;
@@ -567,6 +649,5 @@ struct Context
         return pipelines[id];
     }
 
-    Array<Pipeline> pipelines;
 };
 

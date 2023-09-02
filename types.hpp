@@ -18,6 +18,44 @@ struct V2
     float y {0};
 };
 
+template<typename T, size_t R, size_t C>
+struct Matrix
+{
+    using type = T;
+    static constexpr size_t rows {R};
+    static constexpr size_t cols {C};
+
+    Matrix() {}
+
+    Matrix(const Matrix<T, R, C>& m)
+    {
+        *this = m;
+    }
+
+    Matrix& operator = (const Matrix<T, R, C>& m)
+    {
+        for(int i = 0; i < R; i++)
+        {
+            for(int j = 0; j < C; j++){
+                data[i][j] = m[i][j];
+            }
+        }
+        return *this;
+    }
+
+    const T* operator[](size_t i) const
+    {
+        return data[i];
+    }
+
+    T* operator[](size_t i)
+    {
+        return data[i];
+    }
+
+    T data[R][C] {{}};
+};
+
 struct V4 {
     union {
         float c[4];
